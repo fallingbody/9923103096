@@ -71,3 +71,29 @@ class Logger {
         this.logs = [];
     }
 }
+
+function loggingMiddleware(stack = 'api-server') {
+    const logger = new Logger(stack);
+    
+    return (req, res, next) => {
+        const start = Date.now();
+        
+        logger.info('http', `${req.method} ${req.path}`, { ip: req.ip });
+        
+        const originalSend = res.send;
+        res.send = function(data) {
+            const duration = Date.now() - start;
+            
+            logger.log(
+                res.statusCode >= 400 ? 'error' : 'info',
+                'http',
+                `${req.method} ${req.path} ${res.statusCode}`,
+                { statusCode: res.statusCode, duration: `${duration}ms` }
+            );
+            
+            return originalSend.call(this, data);
+        };
+        
+        next();
+    };
+}
