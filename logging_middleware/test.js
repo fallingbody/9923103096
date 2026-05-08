@@ -102,8 +102,10 @@ function loggingMiddleware(stack = 'api-server') {
     };
 }
 
-const logger = new Logger('Backend');
-logger.error('handler', 'received string, expected bool');
-logger.fatal('db', 'Critical database connection failure');
+if (require.main === module) {
+    const logger = new Logger('Backend');
+    logger.error('handler', 'received string, expected bool');
+    logger.fatal('db', 'Critical database connection failure');
+}
 
 module.exports = { Logger, loggingMiddleware };
