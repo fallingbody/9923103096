@@ -153,3 +153,40 @@ def bulk_mark_as_read():
         'status': 'success',
         'data': {'updated': len(ids)}
     }), 200
+
+@app.route(f'{API_PREFIX}/notifications/<notification_id>', methods=['DELETE'])
+@require_auth
+def delete_notification(notification_id):
+    if not db.execute_update('notifications', {'id': notification_id}, {'deletedAt': datetime.now().isoformat()}):
+        return jsonify({'status': 'error', 'code': 'NOT_FOUND', 'message': 'Not found'}), 404
+    
+    return '', 204
+
+@app.route(f'{API_PREFIX}/notifications/priority', methods=['GET'])
+@require_auth
+def get_priority_notifications():
+    student_id = request.args.get('studentId')
+    limit = int(request.args.get('limit', 10))
+    
+    if not student_id:
+        return jsonify({
+            'status': 'error',
+            'code': 'INVALID_INPUT',
+            'message': 'Missing studentId'
+        }), 400
+    
+    query = f"""SELECT n.*, 
+        (CASE WHEN n.type='Placement' THEN 40 
+              WHEN n.type='Result' THEN 30 
+              ELSE 20 END * 0.4) as priorityScore 
+        FROM notifications n 
+        WHERE n.studentId='{student_id}' 
+        ORDER BY priorityScore DESC 
+        LIMIT {limit}"""
+    
+    notifications = db.execute_query(query)
+    
+    return jsonify({
+        'status': 'success',
+        'data': {'notifications': notifications, 'total': len(notifications)}
+    }), 200
