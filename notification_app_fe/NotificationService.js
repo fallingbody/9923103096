@@ -23,3 +23,28 @@ class NotificationService {
             this._buildURL('/notifications', params),
             { method: 'GET', headers: this._getHeaders() }
         );
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        this._setCache(cacheKey, data.data.notifications);
+        
+        return data.data.notifications;
+    }
+    async getPriorityNotifications(studentId, limit = 10) {
+        const cacheKey = `priority:${studentId}:${limit}`;
+        const cached = this._getFromCache(cacheKey);
+        if (cached) return cached;
+        
+        const response = await fetch(
+            this._buildURL('/notifications/priority', { studentId, limit }),
+            { method: 'GET', headers: this._getHeaders() }
+        );
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        this._setCache(cacheKey, data.data.notifications);
+        
+        return data.data.notifications;
+    }
