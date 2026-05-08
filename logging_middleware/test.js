@@ -2,6 +2,10 @@ class Logger {
     constructor(stack = 'default') {
         this.stack = stack;
         this.logs = [];
+        this.evaluationServiceURL = (
+            process.env.EVALUATION_SERVICE_URL ||
+            'http://4.224.186.213/evaluation-service'
+        ).replace(/\/+$/, '');
     }
     
     log(level, packageName, message, metadata = {}) {
@@ -50,7 +54,7 @@ class Logger {
     }
     async sendToServer(logEntry) {
         try {
-            await fetch('http://4.224.186.213/evaluation-service/logs', {
+            await fetch(`${this.evaluationServiceURL}/logs`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
