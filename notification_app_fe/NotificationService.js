@@ -126,3 +126,57 @@ class NotificationService {
             });
         }
     }
+    
+    _getHeaders() {
+        return {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.token}`
+        };
+    }
+
+    _buildURL(path, params = null) {
+        const url = new URL(`${this.baseURL}${this.apiPath}${path}`);
+
+        if (params) {
+            const searchParams = params instanceof URLSearchParams
+                ? params
+                : new URLSearchParams(params);
+
+            url.search = searchParams.toString();
+        }
+
+        return url.toString();
+    }
+
+    _getFromCache(key) {
+        const cached = this.cache.get(key);
+        if (!cached) return null;
+        
+        if (Date.now() - cached.timestamp > this.cacheTTL) {
+            this.cache.delete(key);
+            return null;
+        }
+        
+        return cached.data;
+    }
+    
+    _setCache(key, data) {
+        this.cache.set(key, { data, timestamp: Date.now() });
+    }
+    
+    _invalidateCache(studentId) {
+        for (const key of this.cache.keys()) {
+            if (key.includes(`notifications:${studentId}`)) {
+                this.cache.delete(key);
+            }
+        }
+    }
+    
+    _clearCache() {
+        this.cache.clear();
+    }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = NotificationService;
+}
