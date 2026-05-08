@@ -1,53 +1,49 @@
 # Notification System Design
 
-This is a simple notification system for sending placement, result, and event updates to students. The main goals are:
+## Stage 1
 
-- store every notification safely
-- show students their latest notifications quickly
-- mark notifications as read
-- avoid failure when sending to many students
+The notification service should cover the normal actions a student app needs:
 
-## API
+- send a notification
+- list notifications for one student
+- mark one or many notifications as read
+- delete a notification
 
-Basic endpoints:
+I would keep the API predictable and versioned:
 
 ```http
-GET    /api/v1/notifications?studentId=1042&filter=unread&limit=20
-POST   /api/v1/notifications/send
-PATCH  /api/v1/notifications/{id}/read
-PATCH  /api/v1/notifications/bulk/read
-DELETE /api/v1/notifications/{id}
+GET    /evaluation-service/api/v1/notifications?studentId=1042&limit=20&offset=0
+POST   /evaluation-service/api/v1/notifications/send
+PATCH  /evaluation-service/api/v1/notifications/{id}/read
+PATCH  /evaluation-service/api/v1/notifications/bulk/read
+DELETE /evaluation-service/api/v1/notifications/{id}
 ```
 
-Example notification:
+Example request for sending a notification:
 
 ```json
 {
   "studentId": "1042",
   "type": "Placement",
   "title": "Placement Drive",
-  "message": "Accenture placement drive is now open",
-  "priority": "high",
-  "isRead": false
+  "message": "Accenture drive is open",
+  "priority": "high"
 }
 ```
 
-All APIs should use token authentication. Normal responses can return `status`, `data`, and a short error message when something fails.
+For real-time updates, I would use WebSocket or Server-Sent Events. The REST API stores and updates notifications, while the real-time channel only tells the frontend that a new notification arrived.
 
-## Database
+## Stage 2
 
-PostgreSQL is a good fit because the data is structured and we need filtering, ordering, and indexes.
-
-Main table:
+I would use PostgreSQL. The data is structured, and most reads are simple filters by student, read status, and time.
 
 ```sql
 CREATE TABLE notifications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     student_id VARCHAR(50) NOT NULL,
-    type VARCHAR(50) NOT NULL,
+    notification_type VARCHAR(30) NOT NULL,
     title VARCHAR(255) NOT NULL,
     message TEXT NOT NULL,
-    priority VARCHAR(20) DEFAULT 'normal',
     is_read BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     read_at TIMESTAMP NULL
@@ -56,40 +52,54 @@ CREATE TABLE notifications (
 CREATE INDEX idx_notifications_student_time
 ON notifications (student_id, created_at DESC);
 
-CREATE INDEX idx_notifications_student_read
+CREATE INDEX idx_notifications_student_unread
 ON notifications (student_id, is_read, created_at DESC);
 ```
 
-Metadata like `companyId`, `driveId`, or `eventId` can be stored in a JSON column or a separate metadata table if it becomes complex.
+As data grows, the main problem will be slow reads if we scan the whole table. The fix is not to add indexes everywhere. Too many indexes slow down inserts and take extra storage. I would add only the indexes that match our actual queries.
 
-## Useful Query
+## Stage 3
 
-Students who received placement notifications in the last 7 days:
+The original query is mostly correct, but it can become slow because it searches a large table and sorts the result.
 
 ```sql
-SELECT
-    student_id,
-    COUNT(*) AS notification_count,
-    MAX(created_at) AS last_notification_at
+SELECT *
 FROM notifications
-WHERE type = 'Placement'
-  AND created_at >= NOW() - INTERVAL '7 days'
-GROUP BY student_id
-ORDER BY last_notification_at DESC;
+WHERE student_id = '1042'
+  AND is_read = false
+ORDER BY created_at DESC;
 ```
 
-## Page Load Performance
+With this index, the database can directly find unread notifications for that student in newest-first order:
 
-Do not load all notifications on every page refresh. Fetch only the latest page first.
+```sql
+CREATE INDEX idx_notifications_unread_lookup
+ON notifications (student_id, is_read, created_at DESC);
+```
 
-Recommended approach:
+The cost becomes close to `O(log n + k)`, where `k` is the number of rows returned. Without the index, it can behave like a full scan plus sort.
 
-- use pagination with `LIMIT 20`
-- order by `created_at DESC`
-- cache the first page in Redis for a few minutes
-- clear or update cache when a new notification is created or marked as read
+Students who got placement notifications in the last 7 days:
 
-Example:
+```sql
+SELECT DISTINCT student_id
+FROM notifications
+WHERE notification_type = 'Placement'
+  AND created_at >= NOW() - INTERVAL '7 days';
+```
+
+## Stage 4
+
+Fetching notifications on every page load is wasteful. The frontend usually needs only the latest few notifications first.
+
+My approach:
+
+- fetch the first 20 notifications only
+- cache the first page for a short time
+- load older notifications only when the user asks or scrolls
+- invalidate cache when a new notification is created or marked as read
+
+Example query:
 
 ```sql
 SELECT *
@@ -99,65 +109,55 @@ ORDER BY created_at DESC
 LIMIT 20 OFFSET 0;
 ```
 
-## Reliable `notify_all`
+Tradeoff: pagination is simple and fast, but the frontend has to handle "load more". Redis caching improves repeated page loads, but it can show slightly old data for a few seconds unless we clear the cache properly.
 
-When sending to many students, one failed email should not stop the whole process.
+## Stage 5
 
-Better flow:
+The given `notify_all` function has one major problem: email, DB save, and push are all tied together inside one loop. If email fails halfway, the rest of the students may not get processed.
 
-1. Create the notification in the database first.
-2. Send email and app push after that.
-3. Process students in batches.
-4. Retry failed email or push sends.
-5. Log failures so they can be retried later.
-
-Short version:
+I would save the notification first, then send email and push as separate best-effort steps.
 
 ```python
 async def notify_all(student_ids, message):
     for batch in chunks(student_ids, 100):
         for student_id in batch:
-            notification = save_notification(student_id, message)
+            notification_id = save_notification(student_id, message)
 
             try:
                 await send_email(student_id, message)
             except Exception:
-                queue_retry("email", student_id, notification.id)
+                add_retry_job("email", student_id, notification_id)
 
             try:
                 await push_to_app(student_id, message)
             except Exception:
-                queue_retry("push", student_id, notification.id)
+                add_retry_job("push", student_id, notification_id)
 ```
 
-The important point is that the app notification is saved even if email or push fails.
+Saving to the database should not wait for email to succeed. The in-app notification is the source of truth. Email and push can fail and retry later.
 
-## Priority Inbox
+## Stage 6
 
-For a priority view, score each notification using:
+For the priority inbox, the provided API is:
 
-- type: Placement > Result > Event
-- recency: newer notifications rank higher
-- read status: unread notifications rank higher
+```http
+GET http://4.224.186.213/evaluation-service/notifications
+```
 
-Example score:
+I would fetch notifications from this API, score them in the frontend, and show the top `n`.
+
+Score idea:
 
 ```text
-priority_score =
-  type_weight * 0.4 +
-  recency_score * 0.35 +
-  unread_score * 0.25
+score = type_score + recency_score + unread_score
 ```
 
-This lets urgent placement updates stay near the top without completely hiding other notifications.
+Suggested weights:
 
-## Final Recommendation
+- Placement: 50
+- Result: 35
+- Event: 20
+- newer notifications get up to 30 extra points
+- unread notifications get 20 extra points
 
-Keep the system simple:
-
-- PostgreSQL for storage
-- proper indexes for student and read status
-- pagination for the UI
-- Redis cache for the first page
-- batch sending with retry queues
-- priority scoring only for the special priority inbox view
+For future notifications, the same scoring can run again whenever new data is fetched. If the list becomes very large, the backend should return only recent notifications and the frontend can keep a small top-10 list instead of sorting everything repeatedly.
