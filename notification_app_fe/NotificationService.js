@@ -48,3 +48,81 @@ class NotificationService {
         
         return data.data.notifications;
     }
+    async sendNotification(notification) {
+        const response = await fetch(
+            this._buildURL('/notifications/send'),
+            {
+                method: 'POST',
+                headers: this._getHeaders(),
+                body: JSON.stringify(notification)
+            }
+        );
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        this._invalidateCache(notification.studentId);
+        this._notifyListeners('notification:created', data.data);
+        
+        return data.data;
+    }
+    async markAsRead(notificationId) {
+        const response = await fetch(
+            this._buildURL(`/notifications/${notificationId}/read`),
+            { method: 'PATCH', headers: this._getHeaders() }
+        );
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        this._clearCache();
+        this._notifyListeners('notification:read', { id: notificationId });
+    }
+    async bulkMarkAsRead(notificationIds) {
+        const response = await fetch(
+            this._buildURL('/notifications/bulk/read'),
+            {
+                method: 'PATCH',
+                headers: this._getHeaders(),
+                body: JSON.stringify({ notificationIds })
+            }
+        );
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        this._clearCache();
+        this._notifyListeners('notifications:read:bulk', { count: notificationIds.length });
+    }
+    async deleteNotification(notificationId) {
+        const response = await fetch(
+            this._buildURL(`/notifications/${notificationId}`),
+            { method: 'DELETE', headers: this._getHeaders() }
+        );
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        this._clearCache();
+        this._notifyListeners('notification:deleted', { id: notificationId });
+    }
+    subscribe(event, callback) {
+        if (!this.listeners[event]) {
+            this.listeners[event] = [];
+        }
+        this.listeners[event].push(callback);
+    }
+    
+    unsubscribe(event, callback) {
+        if (this.listeners[event]) {
+            this.listeners[event] = this.listeners[event].filter(cb => cb !== callback);
+        }
+    }
+    _notifyListeners(event, data) {
+        if (this.listeners[event]) {
+            this.listeners[event].forEach(cb => {
+                try {
+                    cb(data);
+                } catch (e) {
+                    console.error(e);
+                }
+            });
+        }
+    }
