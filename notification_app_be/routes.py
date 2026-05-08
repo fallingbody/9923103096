@@ -7,6 +7,7 @@ import logging
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+API_PREFIX = '/evaluation-service/api/v1'
 
 
 class MockDB:
@@ -34,6 +35,7 @@ class MockRedis:
 db = MockDB()
 cache = MockRedis()
 
+
 def require_auth(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -48,3 +50,33 @@ def require_auth(f):
         return f(*args, **kwargs)
     
     return decorated_function
+
+@app.route(f'{API_PREFIX}/notifications', methods=['GET'])
+@require_auth
+def get_notifications():
+    student_id = request.args.get('studentId')
+    limit = min(int(request.args.get('limit', 20)), 100)
+    offset = int(request.args.get('offset', 0))
+    
+    if not student_id:
+        return jsonify({'status': 'error', 'code': 'INVALID_INPUT', 'message': 'Missing studentId'}), 400
+    
+    cache_key = f"notifications:{student_id}:page:{offset//limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return jsonify(json.loads(cached)), 200
+    
+    query = f"SELECT * FROM notifications WHERE studentId = '{student_id}' ORDER BY createdAt DESC LIMIT {limit} OFFSET {offset}"
+    notifications = db.execute_query(query)
+    
+    response = {
+        'status': 'success',
+        'data': {
+            'notifications': notifications,
+            'total': len(notifications)
+        },
+        'timestamp': datetime.now().isoformat()
+    }
+    
+    cache.setex(cache_key, 300, json.dumps(response))
+    return jsonify(response), 200
