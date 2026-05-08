@@ -190,3 +190,21 @@ def get_priority_notifications():
         'status': 'success',
         'data': {'notifications': notifications, 'total': len(notifications)}
     }), 200
+
+@app.route('/evaluation-service/health', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'healthy'}), 200
+
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'status': 'error', 'code': 'NOT_FOUND'}), 404
+
+
+@app.errorhandler(500)
+def server_error(error):
+    return jsonify({'status': 'error', 'code': 'SERVER_ERROR'}), 500
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=False)
