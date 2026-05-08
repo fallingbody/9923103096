@@ -80,3 +80,37 @@ def get_notifications():
     
     cache.setex(cache_key, 300, json.dumps(response))
     return jsonify(response), 200
+@app.route(f'{API_PREFIX}/notifications/send', methods=['POST'])
+@require_auth
+def send_notification():
+    data = request.get_json()
+    
+    for field in ['studentId', 'type', 'title', 'message']:
+        if field not in data:
+            return jsonify({
+                'status': 'error',
+                'code': 'INVALID_INPUT',
+                'message': f'Missing {field}'
+            }), 400
+    
+    notification = {
+        'studentId': data['studentId'],
+        'type': data['type'],
+        'title': data['title'],
+        'message': data['message'],
+        'isRead': False,
+        'createdAt': datetime.now().isoformat()
+    }
+    
+    if not db.execute_insert('notifications', notification):
+        return jsonify({'status': 'error', 'code': 'DB_ERROR', 'message': 'Failed to save'}), 500
+    
+    cache.delete(f"notifications:{data['studentId']}:*")
+    return jsonify({
+        'status': 'success',
+        'data': {
+            'id': 'uuid',
+            'studentId': data['studentId'],
+            'createdAt': notification['createdAt']
+        }
+    }), 201
