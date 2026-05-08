@@ -33,3 +33,18 @@ class MockRedis:
 
 db = MockDB()
 cache = MockRedis()
+
+def require_auth(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'status': 'error', 'code': 'AUTH_FAILED', 'message': 'Invalid token'}), 401
+        
+        token = auth_header.split('Bearer ')[1]
+        if not len(token) > 10:
+            return jsonify({'status': 'error', 'code': 'AUTH_FAILED', 'message': 'Invalid token'}), 401
+        
+        return f(*args, **kwargs)
+    
+    return decorated_function
