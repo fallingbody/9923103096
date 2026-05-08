@@ -80,6 +80,7 @@ def get_notifications():
     
     cache.setex(cache_key, 300, json.dumps(response))
     return jsonify(response), 200
+
 @app.route(f'{API_PREFIX}/notifications/send', methods=['POST'])
 @require_auth
 def send_notification():
@@ -114,3 +115,41 @@ def send_notification():
             'createdAt': notification['createdAt']
         }
     }), 201
+
+@app.route(f'{API_PREFIX}/notifications/<notification_id>/read', methods=['PATCH'])
+@require_auth
+def mark_as_read(notification_id):
+    update_data = {
+        'isRead': True,
+        'readAt': datetime.now().isoformat()
+    }
+    
+    if not db.execute_update('notifications', {'id': notification_id}, update_data):
+        return jsonify({'status': 'error', 'code': 'NOT_FOUND', 'message': 'Not found'}), 404
+    
+    return jsonify({
+        'status': 'success',
+        'data': {'id': notification_id, 'isRead': True}
+    }), 200
+
+@app.route(f'{API_PREFIX}/notifications/bulk/read', methods=['PATCH'])
+@require_auth
+def bulk_mark_as_read():
+    data = request.get_json()
+    ids = data.get('notificationIds', [])
+    
+    if not ids:
+        return jsonify({
+            'status': 'error',
+            'code': 'INVALID_INPUT',
+            'message': 'Missing ids'
+        }), 400
+    
+    read_time = datetime.now().isoformat()
+    for notif_id in ids:
+        db.execute_update('notifications', {'id': notif_id}, {'isRead': True, 'readAt': read_time})
+    
+    return jsonify({
+        'status': 'success',
+        'data': {'updated': len(ids)}
+    }), 200
